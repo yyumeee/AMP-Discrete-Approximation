@@ -240,6 +240,13 @@ def build_design(
     return Z_f, Z_e
 
 def disc_martingale_cis(results, y_grid, q = 0.5, lo = 5.0, hi = 95.0):
+    '''
+    This function takes the output of get_posterior as input and 
+    returns bounds of confidence sets per each evaluation point 
+    In order to compute the quantile target value for each sampled CDF,
+    it searches until it finds the first value surpassing the target q,
+    rather than interpolating as its continuous counterpart does
+    '''
     y1d = np.asarray(y_grid).ravel()
     out = []
     for entry in results:
