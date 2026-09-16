@@ -399,13 +399,13 @@ def main():
                 for disc_class in class_number:
                     #quantize the outcome
                     new_y_grid = y_grid[0::((len(y_grid) - 1)// disc_class),]
-                    y_train_now = new_y_grid[np.clip(np.searchsorted(new_y_grid, y_train_now, side = 'right'),
+                    y_train_class = new_y_grid[np.clip(np.searchsorted(new_y_grid, y_train_now, side = 'right'),
                                                      0, len(new_y_grid) - 1)]
                     class_width = new_y_grid[1,] - new_y_grid[0,]
 
                     #get TabPFN estimate from the quantized dataset
                     with timed(f'K = {disc_class} TabPFN forward samples'):
-                        samp = forward_samples(X_train_now, y_train_now, X_test, N = args.N)
+                        samp = forward_samples(X_train_now, y_train_class, X_test, N = args.N)
         
                     with timed('CDF'):
                         cdf_arr = cdf_from_samples(new_y_grid, samp)
