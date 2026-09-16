@@ -398,10 +398,11 @@ def main():
 
                 for disc_class in class_number:
                     #quantize the outcome
-                    new_y_grid = y_grid[0::((len(y_grid) - 1)// disc_class),]
-                    y_train_class = new_y_grid[np.clip(np.searchsorted(new_y_grid, y_train_now, side = 'right'),
-                                                     0, len(new_y_grid) - 1)]
-                    class_width = new_y_grid[1,] - new_y_grid[0,]
+                    new_y_grid = np.linspace(1, disc_class, disc_class)
+                    y_train_class, kbounds = pd.cut(y_train_now, bins = disc_class, labels = False, retbins = True)
+                    y_train_class += 1
+                    eps = 1e-9
+                    f_test_now = pd.cut(np.clip(f_test, kbounds[0] + eps, kbounds[-1]), bins = kbounds, labels = False) + 1
 
                     #get TabPFN estimate from the quantized dataset
                     with timed(f'K = {disc_class} TabPFN forward samples'):
@@ -433,7 +434,7 @@ def main():
                         disc_lo, disc_hi = disc_cis[:, 0], disc_cis[:, 1]
         
                         #evaluate differences
-                        diffs = cs_metrics([disc_lo, disc_hi], [cont_lo, cont_hi], class_width = class_width)
+                        diffs = cs_metrics([disc_lo, disc_hi], [cont_lo, cont_hi])
                         
                         records.append({'K': disc_class, 'n': sample_size, 
                                         'd': features, 'rep': rep, 
