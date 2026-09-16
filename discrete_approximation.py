@@ -399,10 +399,7 @@ def main():
                 for disc_class in class_number:
                     #quantize the outcome
                     new_y_grid = np.linspace(1, disc_class, disc_class)
-                    y_train_class, kbounds = pd.cut(y_train_now, bins = disc_class, labels = False, retbins = True)
-                    y_train_class += 1
-                    eps = 1e-9
-                    f_test_now = pd.cut(np.clip(f_test, kbounds[0] + eps, kbounds[-1]), bins = kbounds, labels = False) + 1
+                    y_train_class = pd.cut(y_train_now, bins = disc_class, labels = False) + 1
 
                     #get TabPFN estimate from the quantized dataset
                     with timed(f'K = {disc_class} TabPFN forward samples'):
