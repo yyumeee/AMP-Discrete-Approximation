@@ -409,7 +409,7 @@ def main():
             for disc_class in class_number:
                 #quantize the outcome
                 new_y_grid = np.linspace(1, disc_class, disc_class)
-                y_train_class, y_test_class = quantize(y_train, y_test, disc_classes = disc_class)
+                y_train_class, _ = quantize(y_train, y_test, disc_classes = disc_class)
 
                 for sample_size in train_sizes:
                     #subset dataset
