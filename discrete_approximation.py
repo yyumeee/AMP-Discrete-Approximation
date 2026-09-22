@@ -13,6 +13,7 @@ from contextlib import contextmanager
 import pandas as pd
 from scipy.stats import norm
 from sklearn.preprocessing import SplineTransformer
+from sklearn.model_selection import train_test_split
 from pathlib import Path
 
 import uqpfn
@@ -256,6 +257,27 @@ def disc_martingale_cis(results, y_grid, q = 0.5, lo = 5.0, hi = 95.0):
         out.append(np.percentile(qb, [lo, hi], method = 'inverted_cdf'))
     return np.stack(out)
 
+def quantize(
+    y_train: np.ndarray,
+    y_test: np.ndarray,
+    disc_classes: int = 10,
+    tail_alpha: float = 0.02,
+) -> tuple[np.ndarray, np.ndarray]:
+    '''
+    This function takes two arrays containing every target variable observed
+    and quantizes in disc_classes equidistant bins, safe for the tail classes
+    (1 and disc_classes) which include every value below/above a set tail (default 0.02)
+    '''
+    import pandas as pd
+    y = np.concatenate([y_train, y_test])
+    low, high = np.quantile(y, [tail_alpha, 1 - tail_alpha])
+    kbounds = np.unique(np.concatenate([[-np.inf],
+                                        np.linspace(low, high, disc_classes - 1),
+                                        [np.inf]]))
+    y_train_quant = pd.cut(y_train, bins = kbounds, labels = False) + 1
+    y_test_quant = pd.cut(y_test, bins = kbounds, labels = False) + 1
+    return y_train_quant, y_test_quant
+    
 def cs_metrics(cs1: np.ndarray, cs2: np.ndarray, class_width: float = 1.0) -> dict:
     '''
     This function takes two arrays representing confidence sets at possibly several
@@ -381,29 +403,24 @@ def main():
         
             theta_true = args.tau * rng.standard_normal(p)
             theta_true[0] = 0.0
+            f_test = Z_te @ theta_true
             y_train = Z_tr @ theta_true + args.sigma * rng.standard_normal(train_max)
-    
-            y_sd = y_train.std()
-            y_grid = np.linspace(
-                y_train.min() - 3 * y_sd,
-                y_train.max() + 3 * y_sd,
-                401,
-            )
 
-            for sample_size in train_sizes:
-                #subset dataset if n < train_max
-                train_ind = rng.choice(X_train.shape[0], size = sample_size, replace = False) 
-                X_train_now = X_train[train_ind, :]
-                y_train_now = y_train[train_ind]
+            for disc_class in class_number:
+                #quantize the outcome
+                new_y_grid = np.linspace(1, disc_class, disc_class)
+                y_train_class, y_test_class = quantize(y_train, y_test, disc_classes = disc_class)
 
-                for disc_class in class_number:
-                    #quantize the outcome
-                    new_y_grid = np.linspace(1, disc_class, disc_class)
-                    y_train_class = pd.cut(y_train_now, bins = disc_class, labels = False) + 1
+                for sample_size in train_sizes:
+                    #subset dataset
+                    X_train_now, _, y_train_now, _ = train_test_split(
+                        X_train, y_train_class, train_size = sample_size,
+                        stratify = y_train_class, random_state = args.seed + rep * 432
+                    )
 
                     #get TabPFN estimate from the quantized dataset
                     with timed(f'K = {disc_class} TabPFN forward samples'):
-                        samp = forward_samples(X_train_now, y_train_class, X_test, N = args.N)
+                        samp = forward_samples(X_train_now, y_train_now, X_test, N = args.N)
         
                     with timed('CDF'):
                         cdf_arr = cdf_from_samples(new_y_grid, samp)
