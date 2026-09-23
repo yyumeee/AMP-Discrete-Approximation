@@ -429,14 +429,14 @@ def main():
                     with timed('get continuous AMP'):
                         cont_res = get_posterior(
                             new_y_grid, sample_size, args.B, args.T, cdf_arr,
-                            discrete = False, alpha_schedule = schedule
+                            discrete = False, alpha_dimension = features,
                         )
         
                     #get discrete AMP
                     with timed('get discrete AMP'):
                         disc_res = get_posterior(
                             new_y_grid, sample_size, args.B, args.T, cdf_arr,
-                            discrete = True, alpha_schedule = schedule
+                            discrete = True, alpha_dimension = features,
                         )
 
                     with timed('calculating results...'):
