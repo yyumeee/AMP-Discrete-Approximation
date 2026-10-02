@@ -392,10 +392,17 @@ def main():
                 
                 for sample_size in train_sizes:
                     #subset the data
-                    X_train_now, _, y_train_now, _ = train_test_split(
-                        X_train, y_train_class, train_size = sample_size, stratify = y_train_class,
-                        random_state = args.seed + rep * 432
-                    )
+                    if disc_class < 50:
+                        X_train_now, _, y_train_now, _ = train_test_split(
+                            X_train, y_train_class, train_size = sample_size, 
+                            stratify = y_train_class,
+                            random_state = args.seed + rep * 432
+                        )
+                    else:
+                        X_train_now, _, y_train_now, _ = train_test_split(
+                            X_train, y_train_class, train_size = sample_size, 
+                            random_state = args.seed + rep * 432
+                        )
 
                     #get TabICL estimate from the quantized dataset
                     with timed('CDF'):
