@@ -338,7 +338,7 @@ def main():
     from uqpfn import tabicl
 
     class_number = [20, 50, 100, 400]
-    sigma = {'20': 0.6, '50': 0.6, '100': 0.6, '400': 0.8}
+    sigma = {'20': 0.6, '50': 0.6, '100': 0.5, '400': 0.5}
     flags = {
         '20': {'iou': 0.9, 'overlap': 1.0, 'card_diff': 0.1, 'bound_diff':0.075},
         '50':  {'iou': 0.94, 'overlap': 1.0, 'card_diff': 0.05, 'bound_diff':0.04},
