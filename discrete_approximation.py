@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import numpy as np
-import pyvinecopulib as pv
-
 import argparse
 import os
 import sys
@@ -10,24 +7,15 @@ import time
 import warnings
 from contextlib import contextmanager
 
+import numpy as np
 import pandas as pd
+import pyvinecopulib as pv
+from sklearn.model_selection import train_test_split
 from scipy.stats import norm
 from sklearn.preprocessing import SplineTransformer
-from sklearn.model_selection import train_test_split
 from pathlib import Path
 
 import uqpfn
-from scripts.rho_utils import estimate_adaptive_rho, kernel_ess
-
-warnings.filterwarnings('ignore')
-
-ROOT = os.path.abspath(os.path.join(os.path.dirname(uqpfn.__file__), '..'))
-if ROOT not in sys.path:
-    sys.path.insert(0, ROOT)
-
-SRC = os.path.join(ROOT, 'src')
-if SRC not in sys.path:
-    sys.path.insert(0, SRC)
 
 DEFAULT_B_POSTSAMPLES = 50
 DEFAULT_T_FWDSAMPLES = 500
@@ -240,14 +228,24 @@ def build_design(
 
     return Z_f, Z_e
 
+def quantize(
+    f_train: np.ndarray,
+    f_test: np.ndarray,
+    disc_classes: int = 10,
+    noise_scale: float = 0.5,
+    seed: int,
+)-> tuple[np.ndarray, np.ndarray]:
+    import numpy as np
+    rng = np.random.default_rng(seed)
+    f = np.concatenate([f_train, f_test])
+    thresholds = np.linspace(f.min(), f.max(), disc_classes  + 1)[1:-1]
+    eps = rng.logistic(0, noise_scale, f_train.shape[0])
+    y_train = np.digitize(f_train + eps, thresholds) + 1
+    f_test_class = np.digitize(f_test, thresholds) + 1
+
+    return y_train, f_test_class
+
 def disc_martingale_cis(results, y_grid, q = 0.5, lo = 5.0, hi = 95.0):
-    '''
-    This function takes the output of get_posterior as input and 
-    returns bounds of confidence sets per each evaluation point 
-    In order to compute the quantile target value for each sampled CDF,
-    it searches until it finds the first value surpassing the target q,
-    rather than interpolating as its continuous counterpart does
-    '''
     y1d = np.asarray(y_grid).ravel()
     out = []
     for entry in results:
@@ -257,44 +255,7 @@ def disc_martingale_cis(results, y_grid, q = 0.5, lo = 5.0, hi = 95.0):
         out.append(np.percentile(qb, [lo, hi], method = 'inverted_cdf'))
     return np.stack(out)
 
-def quantize(
-    y_train: np.ndarray,
-    y_test: np.ndarray,
-    disc_classes: int = 10,
-    tail_alpha: float = 0.02,
-) -> tuple[np.ndarray, np.ndarray]:
-    '''
-    This function takes two arrays containing every target variable observed
-    and quantizes in disc_classes equidistant bins, safe for the tail classes
-    (1 and disc_classes) which include every value below/above a set tail (default 0.02)
-    '''
-    import pandas as pd
-    y = np.concatenate([y_train, y_test])
-    low, high = np.quantile(y, [tail_alpha, 1 - tail_alpha])
-    kbounds = np.unique(np.concatenate([[-np.inf],
-                                        np.linspace(low, high, disc_classes - 1),
-                                        [np.inf]]))
-    y_train_quant = pd.cut(y_train, bins = kbounds, labels = False) + 1
-    y_test_quant = pd.cut(y_test, bins = kbounds, labels = False) + 1
-    return y_train_quant, y_test_quant
-    
 def cs_metrics(cs1: np.ndarray, cs2: np.ndarray, class_width: float = 1.0) -> dict:
-    '''
-    This function takes two arrays representing confidence sets at possibly several
-    evaluation points, and computes pairwise similarity metrics between first and second input.
-    It outputs a dictionary containing different metrics for each evaluation point:
-    -iou (intersection over unit) represents the ratio of intersection over unit
-    -overlap represents how much of the first confidence set is represented by the second one
-    -card_diff represents how much different in size is the second set compared to the first
-    -low_diff and high_diff represent the distance of bounds of the second set to the first
-    metrics are usually weighted by the first set's cardinality.
-    Furthermore, the output also includes a nested dictionary of summaries, containing
-    the percentage of evaluation points breaching a certain threshold in a certain metric
-    '''
-
-    if cs1.shape != cs2.shape:
-      raise ValueError('cs1 and cs2 arrays must have the same shape')
-  
     if class_width <= 0:
         raise ValueError(f'class_width must be positive, got {class_width} instead.')
     lo1, hi1 = cs1
@@ -318,21 +279,20 @@ def cs_metrics(cs1: np.ndarray, cs2: np.ndarray, class_width: float = 1.0) -> di
         lowdiff = (np.abs(lo1 - lo2) // class_width) / cardin1
         highdiff = (np.abs(hi1 - hi2) // class_width) / cardin1
 
-    low_iou = (iou < 0.75).mean()
-    low_overlap = (overlap < 0.9).mean()
-    high_carddiff = (card_diff > 0.3).mean()
-    high_lowdiff = (lowdiff > 0.25).mean()
-    high_highdiff = (highdiff > 0.25).mean()
+    bounds = flags[str(K)]
+    low_iou = (iou < bounds['iou']).mean()
+    low_overlap = (overlap < bounds['overlap']).mean()
+    high_carddiff = (card_diff > bounds['card_diff']).mean()
+    high_lowdiff = (lowdiff > bounds['bound_diff']).mean()
+    high_highdiff = (highdiff > bounds['bound_diff']).mean()
     overconf = (cardin1 > cardin2).mean()
-    underconf = (cardin1 < cardin2).mean()
 
     return {'iou': iou, 'overlap': overlap,
            'card_diff': card_diff, 'low_diff': lowdiff,
            'high_diff': highdiff,
            'failures':{'iou': low_iou, 'overlap': low_overlap,
                       'card_diff': high_carddiff, 'low_diff': high_lowdiff,
-                      'high_diff': high_highdiff, 'over_confidence': overconf,
-                      'under_confidence': underconf}}
+                      'high_diff': high_highdiff, 'over_confidence': overconf,}}
 
 
 @contextmanager
@@ -340,7 +300,17 @@ def timed(name: str):
     t0 = time.perf_counter()
     yield
     print(f'   [{name}] {time.perf_counter() - t0:.2f}s', flush = True)
+    
+warnings.filterwarnings('ignore')
 
+ROOT = os.path.abspath(os.path.join(os.path.dirname(uqpfn.__file__), '..'))
+if ROOT not in sys.path:
+    sys.path.insert(0, ROOT)
+
+SRC = os.path.join(ROOT, 'src')
+if SRC not in sys.path:
+    sys.path.insert(0, SRC)
+    
 def parse_args():
     p = argparse.ArgumentParser(
         description=__doc__,
@@ -365,18 +335,23 @@ def parse_args():
 def main():
     args = parse_args()
 
-    from uqpfn.martingale import make_alpha_schedules
-    from uqpfn.tabpfn import forward_samples, cdf_from_samples
+    from uqpfn import tabicl
 
     class_number = [20, 50, 100, 400]
-    train_sizes = [50, 100, 200, 400]
-    train_max = max(train_sizes)
+    sigma = {'20': 0.6, '50': 0.6, '100': 0.6, '400': 0.8}
+    flags = {
+        '20': {'iou': 0.9, 'overlap': 1.0, 'card_diff': 0.1, 'bound_diff':0.075},
+        '50':  {'iou': 0.94, 'overlap': 1.0, 'card_diff': 0.05, 'bound_diff':0.04},
+        '100':  {'iou': 0.97, 'overlap' :0.98, 'card_diff': 0.03, 'bound_diff':0.025},
+        '400':  {'iou': 0.98, 'overlap': 0.99, 'card_diff': 0.02, 'bound_diff': 0.015},
+    }
+    train_sizes = [50, 100, 200]
+    train_max = 1000
     features_number = [5, 20]
     records = []
 
     for features in features_number:
         true_features = features #have J = d
-        schedule = make_alpha_schedules(features)['default']['fn'] #default AMP alpha schedule
 
         for rep in range(args.n_reps):
             print(f'\n=== Rep {rep + 1}/{args.n_reps} for {features} features ===', flush = True)
@@ -403,27 +378,31 @@ def main():
         
             theta_true = args.tau * rng.standard_normal(p)
             theta_true[0] = 0.0
-            f_test = Z_te @ theta_true
-            y_train = Z_tr @ theta_true + args.sigma * rng.standard_normal(train_max)
+            f_test = Z_te @ theta_true #get true vals for coverage assessment
+            f_train = Z_tr @ theta_true 
 
             for disc_class in class_number:
                 #quantize the outcome
                 new_y_grid = np.linspace(1, disc_class, disc_class)
-                y_train_class, _ = quantize(y_train, y_test, disc_classes = disc_class)
-
+                y_train_class, _ = quantize(y_train, f_test, 
+                                            disc_classes = disc_class,
+                                            noise_scale = sigma[str(disc_class)]
+                                            seed = args.seed + rep * 432
+                                           )
+                
                 for sample_size in train_sizes:
-                    #subset dataset
+                    #subset the data
                     X_train_now, _, y_train_now, _ = train_test_split(
-                        X_train, y_train_class, train_size = sample_size,
-                        stratify = y_train_class, random_state = args.seed + rep * 432
+                        X_train, y_train_class, train_size = sample_size, stratify = y_train_class,
+                        random_state = args.seed + rep * 432
                     )
 
-                    #get TabPFN estimate from the quantized dataset
-                    with timed(f'K = {disc_class} TabPFN forward samples'):
-                        samp = forward_samples(X_train_now, y_train_now, X_test, N = args.N)
-        
+                    #get TabICL estimate from the quantized dataset
                     with timed('CDF'):
-                        cdf_arr = cdf_from_samples(new_y_grid, samp)
+                        model = tabicl.TabICLQuantileRegressor(n_estimators = 4)
+                        model.fit(X_train_now, y_train_now)
+                        cdf_arr = model.predict_cdf(X_test, new_y_grid, np.linspace(0.001, 0.999, 999))
+                        cdf_arr[-1,:] = 1.0
     
                     #get continuous AMP
                     with timed('get continuous AMP'):
@@ -468,7 +447,7 @@ def main():
                 'iou_fails', 'overlap_fails',
                 'card_diff_fails', 'low_diff_fails',
                 'high_diff_fails',
-                'over_confidence_fails', 'under_confidence_fails', 
+                'over_confidence_fails', 
             ]].mean()
             print(f'\n Summary after rep {rep + 1}:\n{summ}\n', flush = True)
 
@@ -483,7 +462,7 @@ def main():
                 'iou_fails', 'overlap_fails',
                 'card_diff_fails', 'low_diff_fails',
                 'high_diff_fails',
-                'over_confidence_fails', 'under_confidence_fails',
+                'over_confidence_fails',
         ]].mean().to_string())
         print(f'operation finished for {features} number of features')
 
